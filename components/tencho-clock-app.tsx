@@ -1,0 +1,498 @@
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
+import type { FormEvent } from "react";
+import type { Session } from "@supabase/supabase-js";
+import { isSupabaseConfigured, supabase } from "@/lib/supabase";
+import type { AdminAttendanceRow, AttendanceRecord, AttendanceStatus, Profile } from "@/lib/types";
+import {
+  formatDuration,
+  formatTime,
+  getStatus,
+  monthStartKey,
+  recordMinutes,
+  statusLabel,
+  todayKey,
+} from "@/lib/time";
+
+type View = "manager" | "admin";
+
+export function TenchoClockApp() {
+  const [session, setSession] = useState<Session | null>(null);
+  const [profile, setProfile] = useState<Profile | null>(null);
+  const [todayRecord, setTodayRecord] = useState<AttendanceRecord | null>(null);
+  const [monthRecords, setMonthRecords] = useState<AttendanceRecord[]>([]);
+  const [adminRows, setAdminRows] = useState<AdminAttendanceRow[]>([]);
+  const [view, setView] = useState<View>("manager");
+  const [filter, setFilter] = useState<AttendanceStatus | "all">("all");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [storeName, setStoreName] = useState("");
+  const [memo, setMemo] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [now, setNow] = useState(new Date());
+
+  useEffect(() => {
+    if (!isSupabaseConfigured) {
+      setError("Supabaseの環境変数が未設定です");
+      setLoading(false);
+      return;
+    }
+
+    let mounted = true;
+    supabase.auth.getSession().then(({ data }) => {
+      if (!mounted) return;
+      setSession(data.session);
+      setLoading(false);
+    });
+
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+      setSession(nextSession);
+      if (!nextSession) {
+        setProfile(null);
+        setTodayRecord(null);
+        setMonthRecords([]);
+        setAdminRows([]);
+      }
+    });
+
+    return () => {
+      mounted = false;
+      listener.subscription.unsubscribe();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!session) return;
+    void loadDashboard();
+  }, [session]);
+
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(new Date()), 30000);
+    return () => window.clearInterval(id);
+  }, []);
+
+  async function loadDashboard() {
+    if (!session?.user.id) return;
+    setLoading(true);
+    setError("");
+
+    try {
+      const loadedProfile = await fetchProfile(session.user.id, session.user.email ?? null);
+      setProfile(loadedProfile);
+      setStoreName(loadedProfile.store_name ?? "");
+
+      const [today, month] = await Promise.all([
+        fetchTodayRecord(session.user.id),
+        fetchMonthRecords(session.user.id),
+      ]);
+
+      setTodayRecord(today);
+      setMonthRecords(month);
+      setMemo(today?.memo ?? "");
+      if (today?.store_name) setStoreName(today.store_name);
+
+      if (loadedProfile.role === "admin") {
+        setView("admin");
+        await loadAdminRows();
+      } else {
+        setView("manager");
+      }
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : "読み込みに失敗しました");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function fetchProfile(userId: string, userEmail: string | null) {
+    const { data, error: profileError } = await supabase
+      .from("profiles")
+      .select("*")
+      .eq("id", userId)
+      .maybeSingle<Profile>();
+
+    if (profileError) throw profileError;
+    if (data) return data;
+
+    const fallbackProfile = {
+      id: userId,
+      email: userEmail,
+      name: userEmail?.split("@")[0] ?? "店長",
+      role: "manager",
+      store_name: "",
+    };
+
+    const { data: created, error: createError } = await supabase
+      .from("profiles")
+      .insert(fallbackProfile)
+      .select("*")
+      .single<Profile>();
+
+    if (createError) throw createError;
+    return created;
+  }
+
+  async function fetchTodayRecord(userId: string) {
+    const { data, error: recordError } = await supabase
+      .from("attendance_records")
+      .select("*")
+      .eq("user_id", userId)
+      .eq("work_date", todayKey())
+      .maybeSingle<AttendanceRecord>();
+
+    if (recordError) throw recordError;
+    return data;
+  }
+
+  async function fetchMonthRecords(userId: string) {
+    const { data, error: monthError } = await supabase
+      .from("attendance_records")
+      .select("*")
+      .eq("user_id", userId)
+      .gte("work_date", monthStartKey())
+      .lte("work_date", todayKey())
+      .order("work_date", { ascending: true })
+      .returns<AttendanceRecord[]>();
+
+    if (monthError) throw monthError;
+    return data ?? [];
+  }
+
+  async function loadAdminRows() {
+    const [{ data: profiles, error: profilesError }, { data: records, error: recordsError }] =
+      await Promise.all([
+        supabase.from("profiles").select("*").order("name", { ascending: true }).returns<Profile[]>(),
+        supabase
+          .from("attendance_records")
+          .select("*")
+          .eq("work_date", todayKey())
+          .returns<AttendanceRecord[]>(),
+      ]);
+
+    if (profilesError) throw profilesError;
+    if (recordsError) throw recordsError;
+
+    const recordsByUser = new Map((records ?? []).map((record) => [record.user_id, record]));
+    setAdminRows(
+      (profiles ?? [])
+        .filter((item) => item.role === "manager")
+        .map((item) => {
+          const record = recordsByUser.get(item.id) ?? null;
+          return {
+            profile: item,
+            record,
+            status: getStatus(record),
+            todayMinutes: recordMinutes(record, now),
+          };
+        }),
+    );
+  }
+
+  async function handleLogin(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setSaving(true);
+    setError("");
+    const { error: loginError } = await supabase.auth.signInWithPassword({ email, password });
+    if (loginError) setError(loginError.message);
+    setSaving(false);
+  }
+
+  async function handleLogout() {
+    setSaving(true);
+    await supabase.auth.signOut();
+    setSaving(false);
+  }
+
+  async function handleClockIn() {
+    if (!session?.user.id) return;
+    setSaving(true);
+    setError("");
+    const payload = {
+      user_id: session.user.id,
+      work_date: todayKey(),
+      store_name: storeName.trim() || profile?.store_name || null,
+      clock_in: new Date().toISOString(),
+      clock_out: null,
+      memo: memo.trim() || null,
+    };
+
+    const { error: upsertError } = await supabase
+      .from("attendance_records")
+      .upsert(payload, { onConflict: "user_id,work_date" });
+
+    if (upsertError) {
+      setError(upsertError.message);
+    } else {
+      await loadDashboard();
+    }
+    setSaving(false);
+  }
+
+  async function handleClockOut() {
+    if (!todayRecord) return;
+    setSaving(true);
+    setError("");
+    const { error: updateError } = await supabase
+      .from("attendance_records")
+      .update({
+        store_name: storeName.trim() || todayRecord.store_name,
+        clock_out: new Date().toISOString(),
+        memo: memo.trim() || null,
+      })
+      .eq("id", todayRecord.id);
+
+    if (updateError) {
+      setError(updateError.message);
+    } else {
+      await loadDashboard();
+    }
+    setSaving(false);
+  }
+
+  const status = getStatus(todayRecord);
+  const todayMinutes = recordMinutes(todayRecord, now);
+  const monthMinutes = useMemo(
+    () => monthRecords.reduce((sum, record) => sum + recordMinutes(record, now), 0),
+    [monthRecords, now],
+  );
+  const visibleAdminRows = adminRows.filter((row) => filter === "all" || row.status === filter);
+  const storeOptions = Array.from(
+    new Set([profile?.store_name, todayRecord?.store_name, storeName].filter(Boolean) as string[]),
+  );
+
+  if (loading) {
+    return (
+      <main className="app-shell">
+        <div className="loading">読み込み中</div>
+      </main>
+    );
+  }
+
+  if (!session) {
+    return (
+      <main className="app-shell">
+        <div className="container">
+          <form className="panel login-panel stack" onSubmit={handleLogin}>
+            <div>
+              <h1 className="brand">Tencho Clock</h1>
+              <p className="subtle">メールアドレスでログイン</p>
+            </div>
+            {error ? <div className="error">{error}</div> : null}
+            <div className="field">
+              <label htmlFor="email">メールアドレス</label>
+              <input
+                id="email"
+                className="input"
+                type="email"
+                autoComplete="email"
+                value={email}
+                onChange={(event) => setEmail(event.target.value)}
+                required
+              />
+            </div>
+            <div className="field">
+              <label htmlFor="password">パスワード</label>
+              <input
+                id="password"
+                className="input"
+                type="password"
+                autoComplete="current-password"
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+                required
+              />
+            </div>
+            <button className="button" type="submit" disabled={saving}>
+              {saving ? "ログイン中" : "ログイン"}
+            </button>
+          </form>
+        </div>
+      </main>
+    );
+  }
+
+  return (
+    <main className="app-shell">
+      <div className="container stack">
+        <header className="topbar">
+          <div>
+            <h1 className="brand">Tencho Clock</h1>
+            <div className="subtle">{profile?.name ?? profile?.email ?? "店長"}</div>
+          </div>
+          <button className="button secondary" type="button" onClick={handleLogout} disabled={saving}>
+            ログアウト
+          </button>
+        </header>
+
+        {profile?.role === "admin" ? (
+          <div className="tabs">
+            <button
+              className={`tab ${view === "admin" ? "active" : ""}`}
+              type="button"
+              onClick={() => {
+                setView("admin");
+                void loadAdminRows();
+              }}
+            >
+              管理者
+            </button>
+            <button
+              className={`tab ${view === "manager" ? "active" : ""}`}
+              type="button"
+              onClick={() => setView("manager")}
+            >
+              自分の打刻
+            </button>
+          </div>
+        ) : null}
+
+        {error ? <div className="error">{error}</div> : null}
+
+        {view === "admin" && profile?.role === "admin" ? (
+          <section className="panel stack">
+            <div className="hero-status">
+              <div>
+                <span className="subtle">全店長の現在状況</span>
+                <h2>{visibleAdminRows.length}人</h2>
+              </div>
+              <button
+                className="button secondary"
+                type="button"
+                onClick={() => void loadAdminRows()}
+                disabled={saving}
+              >
+                更新
+              </button>
+            </div>
+            <div className="filter-row">
+              <button
+                className={`filter ${filter === "working" ? "active" : ""}`}
+                onClick={() => setFilter("working")}
+                type="button"
+              >
+                出勤中
+              </button>
+              <button
+                className={`filter ${filter === "not-started" ? "active" : ""}`}
+                onClick={() => setFilter("not-started")}
+                type="button"
+              >
+                未出勤
+              </button>
+              <button
+                className={`filter ${filter === "done" ? "active" : ""}`}
+                onClick={() => setFilter("done")}
+                type="button"
+              >
+                退勤済み
+              </button>
+            </div>
+            <button className="filter" type="button" onClick={() => setFilter("all")}>
+              全員表示
+            </button>
+            <div className="manager-list">
+              {visibleAdminRows.map((row) => (
+                <article className="manager-row" key={row.profile.id}>
+                  <div className="row-head">
+                    <div>
+                      <div className="row-title">{row.profile.name ?? row.profile.email ?? "未設定"}</div>
+                      <div className="subtle">{row.record?.store_name ?? row.profile.store_name ?? "-"}</div>
+                    </div>
+                    <StatusBadge status={row.status} />
+                  </div>
+                  <div className="row-details">
+                    <span>出勤 {formatTime(row.record?.clock_in)}</span>
+                    <span>退勤 {formatTime(row.record?.clock_out)}</span>
+                    <span>勤務 {formatDuration(recordMinutes(row.record, now))}</span>
+                    <span>メモ {row.record?.memo || "-"}</span>
+                  </div>
+                </article>
+              ))}
+              {visibleAdminRows.length === 0 ? <div className="subtle">該当する店長はいません</div> : null}
+            </div>
+          </section>
+        ) : (
+          <section className="panel stack">
+            <div className="hero-status">
+              <div>
+                <StatusBadge status={status} />
+                <h2>{statusLabel(status)}</h2>
+              </div>
+              <div className="subtle">{todayKey()}</div>
+            </div>
+
+            <div className="grid">
+              <Metric label="今日の出勤" value={formatTime(todayRecord?.clock_in)} />
+              <Metric label="今日の退勤" value={formatTime(todayRecord?.clock_out)} />
+              <Metric label="今日の勤務時間" value={formatDuration(todayMinutes)} />
+              <Metric label="今月の勤務時間" value={formatDuration(monthMinutes)} />
+            </div>
+
+            <div className="field">
+              <label htmlFor="store">勤務店舗</label>
+              <input
+                id="store"
+                className="input"
+                list="store-options"
+                value={storeName}
+                onChange={(event) => setStoreName(event.target.value)}
+                placeholder="店舗名"
+              />
+              <datalist id="store-options">
+                {storeOptions.map((option) => (
+                  <option value={option} key={option} />
+                ))}
+              </datalist>
+            </div>
+
+            <div className="field">
+              <label htmlFor="memo">一言メモ</label>
+              <textarea
+                id="memo"
+                className="textarea"
+                value={memo}
+                onChange={(event) => setMemo(event.target.value)}
+                placeholder="共有したいこと"
+              />
+            </div>
+
+            <div className="actions">
+              <button
+                className="button"
+                type="button"
+                onClick={handleClockIn}
+                disabled={saving || status === "working"}
+              >
+                出勤
+              </button>
+              <button
+                className="button danger"
+                type="button"
+                onClick={handleClockOut}
+                disabled={saving || status !== "working"}
+              >
+                退勤
+              </button>
+            </div>
+          </section>
+        )}
+      </div>
+    </main>
+  );
+}
+
+function StatusBadge({ status }: { status: AttendanceStatus }) {
+  return <span className={`status ${status}`}>{statusLabel(status)}</span>;
+}
+
+function Metric({ label, value }: { label: string; value: string }) {
+  return (
+    <dl className="metric">
+      <dt>{label}</dt>
+      <dd>{value}</dd>
+    </dl>
+  );
+}
