@@ -16,6 +16,7 @@ import {
 } from "@/lib/time";
 
 type View = "manager" | "admin";
+type AuthMode = "login" | "signup";
 
 export function TenchoClockApp() {
   const [session, setSession] = useState<Session | null>(null);
@@ -24,14 +25,18 @@ export function TenchoClockApp() {
   const [monthRecords, setMonthRecords] = useState<AttendanceRecord[]>([]);
   const [adminRows, setAdminRows] = useState<AdminAttendanceRow[]>([]);
   const [view, setView] = useState<View>("manager");
+  const [authMode, setAuthMode] = useState<AuthMode>("login");
   const [filter, setFilter] = useState<AttendanceStatus | "all">("all");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [signupName, setSignupName] = useState("");
+  const [signupStoreName, setSignupStoreName] = useState("");
   const [storeName, setStoreName] = useState("");
   const [memo, setMemo] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
   const [now, setNow] = useState(new Date());
 
   useEffect(() => {
@@ -195,8 +200,61 @@ export function TenchoClockApp() {
     event.preventDefault();
     setSaving(true);
     setError("");
+    setMessage("");
     const { error: loginError } = await supabase.auth.signInWithPassword({ email, password });
     if (loginError) setError(loginError.message);
+    setSaving(false);
+  }
+
+  async function handleSignup(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setSaving(true);
+    setError("");
+    setMessage("");
+
+    const name = signupName.trim();
+    const signupStore = signupStoreName.trim();
+
+    const { data, error: signupError } = await supabase.auth.signUp({
+      email,
+      password,
+      options: {
+        data: {
+          name,
+          store_name: signupStore,
+        },
+      },
+    });
+
+    if (signupError) {
+      setError(signupError.message);
+      setSaving(false);
+      return;
+    }
+
+    if (data.session && data.user) {
+      const { error: profileError } = await supabase.from("profiles").upsert(
+        {
+          id: data.user.id,
+          email: data.user.email ?? email,
+          name,
+          role: "manager",
+          store_name: signupStore,
+        },
+        { onConflict: "id" },
+      );
+
+      if (profileError) {
+        setError(profileError.message);
+      } else {
+        setSession(data.session);
+        setMessage("アカウントを作成しました");
+      }
+    } else {
+      setAuthMode("login");
+      setMessage("アカウントを作成しました。メール確認後にログインしてください。");
+    }
+
     setSaving(false);
   }
 
@@ -272,15 +330,18 @@ export function TenchoClockApp() {
   }
 
   if (!session) {
+    const isSignup = authMode === "signup";
+
     return (
       <main className="app-shell">
         <div className="container">
-          <form className="panel login-panel stack" onSubmit={handleLogin}>
+          <form className="panel login-panel stack" onSubmit={isSignup ? handleSignup : handleLogin}>
             <div>
               <h1 className="brand">Tencho Clock</h1>
-              <p className="subtle">メールアドレスでログイン</p>
+              <p className="subtle">{isSignup ? "店長アカウントを作成" : "メールアドレスでログイン"}</p>
             </div>
             {error ? <div className="error">{error}</div> : null}
+            {message ? <div className="subtle">{message}</div> : null}
             <div className="field">
               <label htmlFor="email">メールアドレス</label>
               <input
@@ -293,6 +354,33 @@ export function TenchoClockApp() {
                 required
               />
             </div>
+            {isSignup ? (
+              <>
+                <div className="field">
+                  <label htmlFor="signup-name">名前</label>
+                  <input
+                    id="signup-name"
+                    className="input"
+                    type="text"
+                    autoComplete="name"
+                    value={signupName}
+                    onChange={(event) => setSignupName(event.target.value)}
+                    required
+                  />
+                </div>
+                <div className="field">
+                  <label htmlFor="signup-store">店舗名</label>
+                  <input
+                    id="signup-store"
+                    className="input"
+                    type="text"
+                    value={signupStoreName}
+                    onChange={(event) => setSignupStoreName(event.target.value)}
+                    required
+                  />
+                </div>
+              </>
+            ) : null}
             <div className="field">
               <label htmlFor="password">パスワード</label>
               <input
@@ -306,7 +394,19 @@ export function TenchoClockApp() {
               />
             </div>
             <button className="button" type="submit" disabled={saving}>
-              {saving ? "ログイン中" : "ログイン"}
+              {saving ? "処理中" : isSignup ? "アカウント作成" : "ログイン"}
+            </button>
+            <button
+              className="button secondary"
+              type="button"
+              disabled={saving}
+              onClick={() => {
+                setAuthMode(isSignup ? "login" : "signup");
+                setError("");
+                setMessage("");
+              }}
+            >
+              {isSignup ? "ログインへ戻る" : "アカウント作成"}
             </button>
           </form>
         </div>
