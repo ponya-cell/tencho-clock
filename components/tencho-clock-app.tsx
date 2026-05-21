@@ -36,7 +36,6 @@ export function TenchoClockApp() {
   const [isEditingAttendance, setIsEditingAttendance] = useState(false);
   const [manualClockIn, setManualClockIn] = useState("");
   const [manualClockOut, setManualClockOut] = useState("");
-  const [correctionMemo, setCorrectionMemo] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -321,7 +320,6 @@ export function TenchoClockApp() {
   function openAttendanceEdit() {
     setManualClockIn(toDateTimeInputValue(todayRecord?.clock_in));
     setManualClockOut(toDateTimeInputValue(todayRecord?.clock_out));
-    setCorrectionMemo("");
     setError("");
     setMessage("");
     setIsEditingAttendance(true);
@@ -330,12 +328,6 @@ export function TenchoClockApp() {
   async function handleManualCorrection(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!session?.user.id) return;
-
-    const reason = correctionMemo.trim();
-    if (!reason) {
-      setError("修正理由メモを入力してください");
-      return;
-    }
 
     const clockInIso = manualClockIn ? dateTimeInputToIso(manualClockIn) : null;
     const clockOutIso = manualClockOut ? dateTimeInputToIso(manualClockOut) : null;
@@ -363,7 +355,7 @@ export function TenchoClockApp() {
       store_name: storeName.trim() || profile?.store_name || todayRecord?.store_name || null,
       clock_in: clockInIso,
       clock_out: clockOutIso,
-      memo: reason,
+      memo: memo.trim() || todayRecord?.memo || null,
     };
 
     const { error: correctionError } = todayRecord
@@ -681,16 +673,6 @@ export function TenchoClockApp() {
                     type="datetime-local"
                     value={manualClockOut}
                     onChange={(event) => setManualClockOut(event.target.value)}
-                  />
-                </div>
-                <div className="field">
-                  <label htmlFor="correction-memo">修正理由メモ</label>
-                  <textarea
-                    id="correction-memo"
-                    className="textarea"
-                    value={correctionMemo}
-                    onChange={(event) => setCorrectionMemo(event.target.value)}
-                    required
                   />
                 </div>
                 <div className="actions">
