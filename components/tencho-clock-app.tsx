@@ -100,7 +100,6 @@ export function TenchoClockApp() {
       setTodayRecord(today);
       setMonthRecords(month);
       setMemo(today?.memo ?? "");
-      if (today?.store_name) setStoreName(today.store_name);
       if (isEditingAttendance) {
         setManualClockIn(toDateTimeInputValue(today?.clock_in));
         setManualClockOut(toDateTimeInputValue(today?.clock_out));
