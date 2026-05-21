@@ -33,6 +33,10 @@ export function TenchoClockApp() {
   const [signupStoreName, setSignupStoreName] = useState("");
   const [storeName, setStoreName] = useState("");
   const [memo, setMemo] = useState("");
+  const [isEditingAttendance, setIsEditingAttendance] = useState(false);
+  const [manualClockIn, setManualClockIn] = useState("");
+  const [manualClockOut, setManualClockOut] = useState("");
+  const [correctionMemo, setCorrectionMemo] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -98,6 +102,10 @@ export function TenchoClockApp() {
       setMonthRecords(month);
       setMemo(today?.memo ?? "");
       if (today?.store_name) setStoreName(today.store_name);
+      if (isEditingAttendance) {
+        setManualClockIn(toDateTimeInputValue(today?.clock_in));
+        setManualClockOut(toDateTimeInputValue(today?.clock_out));
+      }
 
       if (loadedProfile.role === "admin") {
         setView("admin");
@@ -307,6 +315,70 @@ export function TenchoClockApp() {
     } else {
       await loadDashboard();
     }
+    setSaving(false);
+  }
+
+  function openAttendanceEdit() {
+    setManualClockIn(toDateTimeInputValue(todayRecord?.clock_in));
+    setManualClockOut(toDateTimeInputValue(todayRecord?.clock_out));
+    setCorrectionMemo("");
+    setError("");
+    setMessage("");
+    setIsEditingAttendance(true);
+  }
+
+  async function handleManualCorrection(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!session?.user.id) return;
+
+    const reason = correctionMemo.trim();
+    if (!reason) {
+      setError("修正理由メモを入力してください");
+      return;
+    }
+
+    const clockInIso = manualClockIn ? dateTimeInputToIso(manualClockIn) : null;
+    const clockOutIso = manualClockOut ? dateTimeInputToIso(manualClockOut) : null;
+
+    if (!clockInIso && !clockOutIso) {
+      setError("出勤時刻または退勤時刻を入力してください");
+      return;
+    }
+
+    if (!clockInIso && clockOutIso) {
+      setError("退勤時刻を保存する場合は出勤時刻も入力してください");
+      return;
+    }
+
+    if (clockInIso && clockOutIso && new Date(clockOutIso).getTime() < new Date(clockInIso).getTime()) {
+      setError("退勤時刻は出勤時刻より後にしてください");
+      return;
+    }
+
+    setSaving(true);
+    setError("");
+    setMessage("");
+
+    const { error: correctionError } = await supabase.from("attendance_records").upsert(
+      {
+        user_id: session.user.id,
+        work_date: todayKey(),
+        store_name: storeName.trim() || profile?.store_name || todayRecord?.store_name || null,
+        clock_in: clockInIso,
+        clock_out: clockOutIso,
+        memo: reason,
+      },
+      { onConflict: "user_id,work_date" },
+    );
+
+    if (correctionError) {
+      setError(correctionError.message);
+    } else {
+      setIsEditingAttendance(false);
+      setMessage("打刻を修正しました");
+      await loadDashboard();
+    }
+
     setSaving(false);
   }
 
@@ -577,6 +649,57 @@ export function TenchoClockApp() {
                 退勤
               </button>
             </div>
+            <button className="button secondary" type="button" onClick={openAttendanceEdit} disabled={saving}>
+              打刻を修正
+            </button>
+            {message ? <div className="subtle">{message}</div> : null}
+            {isEditingAttendance ? (
+              <form className="stack" onSubmit={handleManualCorrection}>
+                <div className="field">
+                  <label htmlFor="manual-clock-in">出勤時刻</label>
+                  <input
+                    id="manual-clock-in"
+                    className="input"
+                    type="datetime-local"
+                    value={manualClockIn}
+                    onChange={(event) => setManualClockIn(event.target.value)}
+                  />
+                </div>
+                <div className="field">
+                  <label htmlFor="manual-clock-out">退勤時刻</label>
+                  <input
+                    id="manual-clock-out"
+                    className="input"
+                    type="datetime-local"
+                    value={manualClockOut}
+                    onChange={(event) => setManualClockOut(event.target.value)}
+                  />
+                </div>
+                <div className="field">
+                  <label htmlFor="correction-memo">修正理由メモ</label>
+                  <textarea
+                    id="correction-memo"
+                    className="textarea"
+                    value={correctionMemo}
+                    onChange={(event) => setCorrectionMemo(event.target.value)}
+                    required
+                  />
+                </div>
+                <div className="actions">
+                  <button className="button" type="submit" disabled={saving}>
+                    {saving ? "保存中" : "保存"}
+                  </button>
+                  <button
+                    className="button secondary"
+                    type="button"
+                    onClick={() => setIsEditingAttendance(false)}
+                    disabled={saving}
+                  >
+                    キャンセル
+                  </button>
+                </div>
+              </form>
+            ) : null}
           </section>
         )}
       </div>
@@ -595,4 +718,21 @@ function Metric({ label, value }: { label: string; value: string }) {
       <dd>{value}</dd>
     </dl>
   );
+}
+
+function toDateTimeInputValue(value: string | null | undefined) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return "";
+
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  const hours = String(date.getHours()).padStart(2, "0");
+  const minutes = String(date.getMinutes()).padStart(2, "0");
+  return `${year}-${month}-${day}T${hours}:${minutes}`;
+}
+
+function dateTimeInputToIso(value: string) {
+  return new Date(value).toISOString();
 }
