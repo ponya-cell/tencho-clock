@@ -359,19 +359,27 @@ export function TenchoClockApp() {
     setError("");
     setMessage("");
 
-    const { error: correctionError } = await supabase.from("attendance_records").upsert(
-      {
-        user_id: session.user.id,
-        work_date: todayKey(),
-        store_name: storeName.trim() || profile?.store_name || todayRecord?.store_name || null,
-        clock_in: clockInIso,
-        clock_out: clockOutIso,
-        memo: reason,
-      },
-      { onConflict: "user_id,work_date" },
-    );
+    const correctionPayload = {
+      store_name: storeName.trim() || profile?.store_name || todayRecord?.store_name || null,
+      clock_in: clockInIso,
+      clock_out: clockOutIso,
+      memo: reason,
+    };
+
+    const { error: correctionError } = todayRecord
+      ? await supabase
+          .from("attendance_records")
+          .update(correctionPayload)
+          .eq("id", todayRecord.id)
+          .eq("user_id", session.user.id)
+      : await supabase.from("attendance_records").insert({
+          ...correctionPayload,
+          user_id: session.user.id,
+          work_date: todayKey(),
+        });
 
     if (correctionError) {
+      console.error("Manual attendance correction failed", correctionError);
       setError(correctionError.message);
     } else {
       setIsEditingAttendance(false);
