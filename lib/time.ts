@@ -22,6 +22,12 @@ export function getStatus(record: AttendanceRecord | null): AttendanceStatus {
   return "done";
 }
 
+export function getRecordsStatus(records: AttendanceRecord[]): AttendanceStatus {
+  if (records.length === 0) return "not-started";
+  if (records.some((record) => record.clock_in && !record.clock_out)) return "working";
+  return "done";
+}
+
 export function statusLabel(status: AttendanceStatus) {
   if (status === "working") return "出勤中";
   if (status === "done") return "退勤済み";
@@ -47,6 +53,10 @@ export function minutesBetween(start: string | null, end: string | null, fallbac
 export function recordMinutes(record: AttendanceRecord | null, now = new Date()) {
   if (!record?.clock_in) return 0;
   return minutesBetween(record.clock_in, record.clock_out, now);
+}
+
+export function recordsMinutes(records: AttendanceRecord[], now = new Date()) {
+  return records.reduce((sum, record) => sum + recordMinutes(record, now), 0);
 }
 
 export function formatDuration(totalMinutes: number) {

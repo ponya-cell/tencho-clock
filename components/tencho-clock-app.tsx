@@ -8,9 +8,10 @@ import type { AdminAttendanceRow, AttendanceRecord, AttendanceStatus, Profile } 
 import {
   formatDuration,
   formatTime,
-  getStatus,
+  getRecordsStatus,
   monthStartKey,
   recordMinutes,
+  recordsMinutes,
   statusLabel,
   todayKey,
 } from "@/lib/time";
@@ -21,7 +22,7 @@ type AuthMode = "login" | "signup";
 export function TenchoClockApp() {
   const [session, setSession] = useState<Session | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
-  const [todayRecord, setTodayRecord] = useState<AttendanceRecord | null>(null);
+  const [todayRecords, setTodayRecords] = useState<AttendanceRecord[]>([]);
   const [monthRecords, setMonthRecords] = useState<AttendanceRecord[]>([]);
   const [adminRows, setAdminRows] = useState<AdminAttendanceRow[]>([]);
   const [view, setView] = useState<View>("manager");
@@ -60,7 +61,7 @@ export function TenchoClockApp() {
       setSession(nextSession);
       if (!nextSession) {
         setProfile(null);
-        setTodayRecord(null);
+        setTodayRecords([]);
         setMonthRecords([]);
         setAdminRows([]);
       }
@@ -93,16 +94,17 @@ export function TenchoClockApp() {
       setStoreName(loadedProfile.store_name ?? "");
 
       const [today, month] = await Promise.all([
-        fetchTodayRecord(session.user.id),
+        fetchTodayRecords(session.user.id),
         fetchMonthRecords(session.user.id),
       ]);
 
-      setTodayRecord(today);
+      const targetRecord = getEditableRecord(today);
+      setTodayRecords(today);
       setMonthRecords(month);
-      setMemo(today?.memo ?? "");
+      setMemo(targetRecord?.memo ?? "");
       if (isEditingAttendance) {
-        setManualClockIn(toDateTimeInputValue(today?.clock_in));
-        setManualClockOut(toDateTimeInputValue(today?.clock_out));
+        setManualClockIn(toDateTimeInputValue(targetRecord?.clock_in));
+        setManualClockOut(toDateTimeInputValue(targetRecord?.clock_out));
       }
 
       if (loadedProfile.role === "admin") {
@@ -146,16 +148,18 @@ export function TenchoClockApp() {
     return created;
   }
 
-  async function fetchTodayRecord(userId: string) {
+  async function fetchTodayRecords(userId: string) {
     const { data, error: recordError } = await supabase
       .from("attendance_records")
       .select("*")
       .eq("user_id", userId)
       .eq("work_date", todayKey())
-      .maybeSingle<AttendanceRecord>();
+      .order("clock_in", { ascending: true, nullsFirst: false })
+      .order("created_at", { ascending: true })
+      .returns<AttendanceRecord[]>();
 
     if (recordError) throw recordError;
-    return data;
+    return data ?? [];
   }
 
   async function fetchMonthRecords(userId: string) {
@@ -180,23 +184,31 @@ export function TenchoClockApp() {
           .from("attendance_records")
           .select("*")
           .eq("work_date", todayKey())
+          .order("clock_in", { ascending: true, nullsFirst: false })
+          .order("created_at", { ascending: true })
           .returns<AttendanceRecord[]>(),
       ]);
 
     if (profilesError) throw profilesError;
     if (recordsError) throw recordsError;
 
-    const recordsByUser = new Map((records ?? []).map((record) => [record.user_id, record]));
+    const recordsByUser = new Map<string, AttendanceRecord[]>();
+    for (const record of records ?? []) {
+      recordsByUser.set(record.user_id, [...(recordsByUser.get(record.user_id) ?? []), record]);
+    }
+
     setAdminRows(
       (profiles ?? [])
         .filter((item) => item.role === "manager")
         .map((item) => {
-          const record = recordsByUser.get(item.id) ?? null;
+          const userRecords = recordsByUser.get(item.id) ?? [];
+          const record = getEditableRecord(userRecords);
           return {
             profile: item,
             record,
-            status: getStatus(record),
-            todayMinutes: recordMinutes(record, now),
+            records: userRecords,
+            status: getRecordsStatus(userRecords),
+            todayMinutes: recordsMinutes(userRecords, now),
           };
         }),
     );
@@ -283,12 +295,10 @@ export function TenchoClockApp() {
       memo: memo.trim() || null,
     };
 
-    const { error: upsertError } = await supabase
-      .from("attendance_records")
-      .upsert(payload, { onConflict: "user_id,work_date" });
+    const { error: insertError } = await supabase.from("attendance_records").insert(payload);
 
-    if (upsertError) {
-      setError(upsertError.message);
+    if (insertError) {
+      setError(insertError.message);
     } else {
       await loadDashboard();
     }
@@ -296,17 +306,17 @@ export function TenchoClockApp() {
   }
 
   async function handleClockOut() {
-    if (!todayRecord) return;
+    if (!openRecord) return;
     setSaving(true);
     setError("");
     const { error: updateError } = await supabase
       .from("attendance_records")
       .update({
-        store_name: storeName.trim() || todayRecord.store_name,
+        store_name: storeName.trim() || openRecord.store_name,
         clock_out: new Date().toISOString(),
         memo: memo.trim() || null,
       })
-      .eq("id", todayRecord.id);
+      .eq("id", openRecord.id);
 
     if (updateError) {
       setError(updateError.message);
@@ -317,8 +327,8 @@ export function TenchoClockApp() {
   }
 
   function openAttendanceEdit() {
-    setManualClockIn(toDateTimeInputValue(todayRecord?.clock_in));
-    setManualClockOut(toDateTimeInputValue(todayRecord?.clock_out));
+    setManualClockIn(toDateTimeInputValue(editableRecord?.clock_in));
+    setManualClockOut(toDateTimeInputValue(editableRecord?.clock_out));
     setError("");
     setMessage("");
     setIsEditingAttendance(true);
@@ -351,17 +361,17 @@ export function TenchoClockApp() {
     setMessage("");
 
     const correctionPayload = {
-      store_name: storeName.trim() || profile?.store_name || todayRecord?.store_name || null,
+      store_name: storeName.trim() || profile?.store_name || editableRecord?.store_name || null,
       clock_in: clockInIso,
       clock_out: clockOutIso,
-      memo: memo.trim() || todayRecord?.memo || null,
+      memo: memo.trim() || editableRecord?.memo || null,
     };
 
-    const { error: correctionError } = todayRecord
+    const { error: correctionError } = editableRecord
       ? await supabase
           .from("attendance_records")
           .update(correctionPayload)
-          .eq("id", todayRecord.id)
+          .eq("id", editableRecord.id)
           .eq("user_id", session.user.id)
       : await supabase.from("attendance_records").insert({
           ...correctionPayload,
@@ -381,15 +391,19 @@ export function TenchoClockApp() {
     setSaving(false);
   }
 
-  const status = getStatus(todayRecord);
-  const todayMinutes = recordMinutes(todayRecord, now);
+  const openRecord = getOpenRecord(todayRecords);
+  const editableRecord = getEditableRecord(todayRecords);
+  const firstTodayRecord = todayRecords[0] ?? null;
+  const latestClockOutRecord = getLatestClockOutRecord(todayRecords);
+  const status = getRecordsStatus(todayRecords);
+  const todayMinutes = recordsMinutes(todayRecords, now);
   const monthMinutes = useMemo(
     () => monthRecords.reduce((sum, record) => sum + recordMinutes(record, now), 0),
     [monthRecords, now],
   );
   const visibleAdminRows = adminRows.filter((row) => filter === "all" || row.status === filter);
   const storeOptions = Array.from(
-    new Set([profile?.store_name, todayRecord?.store_name, storeName].filter(Boolean) as string[]),
+    new Set([profile?.store_name, editableRecord?.store_name, storeName].filter(Boolean) as string[]),
   );
 
   if (loading) {
@@ -575,9 +589,9 @@ export function TenchoClockApp() {
                     <StatusBadge status={row.status} />
                   </div>
                   <div className="row-details">
-                    <span>出勤 {formatTime(row.record?.clock_in)}</span>
-                    <span>退勤 {formatTime(row.record?.clock_out)}</span>
-                    <span>勤務 {formatDuration(recordMinutes(row.record, now))}</span>
+                    <span>出勤 {formatTime(row.records[0]?.clock_in)}</span>
+                    <span>退勤 {formatTime(getLatestClockOutRecord(row.records)?.clock_out)}</span>
+                    <span>勤務 {formatDuration(row.todayMinutes)}</span>
                     <span>メモ {row.record?.memo || "-"}</span>
                   </div>
                 </article>
@@ -596,8 +610,8 @@ export function TenchoClockApp() {
             </div>
 
             <div className="grid">
-              <Metric label="今日の出勤" value={formatTime(todayRecord?.clock_in)} />
-              <Metric label="今日の退勤" value={formatTime(todayRecord?.clock_out)} />
+              <Metric label="今日の出勤" value={formatTime(firstTodayRecord?.clock_in)} />
+              <Metric label="今日の退勤" value={formatTime(latestClockOutRecord?.clock_out)} />
               <Metric label="今日の勤務時間" value={formatDuration(todayMinutes)} />
               <Metric label="今月の勤務時間" value={formatDuration(monthMinutes)} />
             </div>
@@ -724,4 +738,16 @@ function toDateTimeInputValue(value: string | null | undefined) {
 
 function dateTimeInputToIso(value: string) {
   return new Date(value).toISOString();
+}
+
+function getOpenRecord(records: AttendanceRecord[]) {
+  return records.find((record) => record.clock_in && !record.clock_out) ?? null;
+}
+
+function getEditableRecord(records: AttendanceRecord[]) {
+  return getOpenRecord(records) ?? [...records].reverse()[0] ?? null;
+}
+
+function getLatestClockOutRecord(records: AttendanceRecord[]) {
+  return [...records].reverse().find((record) => record.clock_out) ?? null;
 }

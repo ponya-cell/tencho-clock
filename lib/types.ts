@@ -26,6 +26,7 @@ export type AttendanceStatus = "not-started" | "working" | "done";
 export type AdminAttendanceRow = {
   profile: Profile;
   record: AttendanceRecord | null;
+  records: AttendanceRecord[];
   status: AttendanceStatus;
   todayMinutes: number;
 };

@@ -20,14 +20,24 @@ create table if not exists public.attendance_records (
   memo text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
-  unique (user_id, work_date)
+  constraint attendance_records_user_id_work_date_key unique (user_id, work_date)
 );
+
+alter table public.attendance_records
+drop constraint if exists attendance_records_user_id_work_date_key;
 
 create index if not exists attendance_records_work_date_idx
   on public.attendance_records (work_date);
 
 create index if not exists attendance_records_user_month_idx
   on public.attendance_records (user_id, work_date);
+
+create index if not exists attendance_records_user_work_date_idx
+  on public.attendance_records (user_id, work_date);
+
+create index if not exists attendance_records_open_shift_idx
+  on public.attendance_records (user_id, work_date)
+  where clock_in is not null and clock_out is null;
 
 create or replace function public.set_updated_at()
 returns trigger
