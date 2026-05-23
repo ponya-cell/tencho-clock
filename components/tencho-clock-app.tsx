@@ -91,7 +91,11 @@ export function TenchoClockApp() {
     setError("");
 
     try {
-      const loadedProfile = await fetchProfile(session.user.id, session.user.email ?? null);
+      const loadedProfile = await fetchProfile(
+        session.user.id,
+        session.user.email ?? null,
+        session.user.user_metadata,
+      );
       setProfile(loadedProfile);
       if (storeNameLoadedForUser !== session.user.id) {
         setStoreName(loadedProfile.store_name ?? "");
@@ -125,7 +129,7 @@ export function TenchoClockApp() {
     }
   }
 
-  async function fetchProfile(userId: string, userEmail: string | null) {
+  async function fetchProfile(userId: string, userEmail: string | null, userMetadata: Record<string, unknown>) {
     const { data, error: profileError } = await supabase
       .from("profiles")
       .select("*")
@@ -133,14 +137,20 @@ export function TenchoClockApp() {
       .maybeSingle<Profile>();
 
     if (profileError) throw supabaseContextError("fetchProfile", profileError.message);
-    if (data) return data;
+    if (data) {
+      return {
+        ...data,
+        name: data.name?.trim() || metadataText(userMetadata.name) || userEmail?.split("@")[0] || "店長",
+        store_name: data.store_name?.trim() || metadataText(userMetadata.store_name) || "",
+      };
+    }
 
     const fallbackProfile: Profile = {
       id: userId,
       email: userEmail,
-      name: userEmail?.split("@")[0] ?? "店長",
+      name: metadataText(userMetadata.name) || userEmail?.split("@")[0] || "店長",
       role: "manager",
-      store_name: "",
+      store_name: metadataText(userMetadata.store_name) || "",
       created_at: "",
     };
 
@@ -791,6 +801,10 @@ function ensureProfileIncluded(profiles: Profile[], fallbackProfile: Profile | n
 
 function supabaseContextError(context: string, message: string) {
   return new Error(`${context}: ${message}`);
+}
+
+function metadataText(value: unknown) {
+  return typeof value === "string" ? value.trim() : "";
 }
 
 function sortAttendanceRecords(records: AttendanceRecord[]) {
