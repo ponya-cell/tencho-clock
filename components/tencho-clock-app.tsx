@@ -33,7 +33,7 @@ export function TenchoClockApp() {
   const [signupName, setSignupName] = useState("");
   const [signupStoreName, setSignupStoreName] = useState("");
   const [storeName, setStoreName] = useState("");
-  const [memo, setMemo] = useState("");
+  const [storeNameLoadedForUser, setStoreNameLoadedForUser] = useState<string | null>(null);
   const [isEditingAttendance, setIsEditingAttendance] = useState(false);
   const [manualClockIn, setManualClockIn] = useState("");
   const [manualClockOut, setManualClockOut] = useState("");
@@ -64,6 +64,7 @@ export function TenchoClockApp() {
         setTodayRecords([]);
         setMonthRecords([]);
         setAdminRows([]);
+        setStoreNameLoadedForUser(null);
       }
     });
 
@@ -91,7 +92,10 @@ export function TenchoClockApp() {
     try {
       const loadedProfile = await fetchProfile(session.user.id, session.user.email ?? null);
       setProfile(loadedProfile);
-      setStoreName(loadedProfile.store_name ?? "");
+      if (storeNameLoadedForUser !== session.user.id) {
+        setStoreName(loadedProfile.store_name ?? "");
+        setStoreNameLoadedForUser(session.user.id);
+      }
 
       const [today, month] = await Promise.all([
         fetchTodayRecords(session.user.id),
@@ -101,7 +105,6 @@ export function TenchoClockApp() {
       const targetRecord = getEditableRecord(today);
       setTodayRecords(today);
       setMonthRecords(month);
-      setMemo(targetRecord?.memo ?? "");
       if (isEditingAttendance) {
         setManualClockIn(toDateTimeInputValue(targetRecord?.clock_in));
         setManualClockOut(toDateTimeInputValue(targetRecord?.clock_out));
@@ -300,7 +303,6 @@ export function TenchoClockApp() {
       store_name: storeName.trim() || profile?.store_name || null,
       clock_in: new Date().toISOString(),
       clock_out: null,
-      memo: memo.trim() || null,
     };
 
     const { data: insertedRecord, error: insertError } = await supabase
@@ -329,7 +331,6 @@ export function TenchoClockApp() {
       .update({
         store_name: storeName.trim() || openRecord.store_name,
         clock_out: new Date().toISOString(),
-        memo: memo.trim() || null,
       })
       .eq("id", openRecord.id);
 
@@ -379,7 +380,6 @@ export function TenchoClockApp() {
       store_name: storeName.trim() || profile?.store_name || editableRecord?.store_name || null,
       clock_in: clockInIso,
       clock_out: clockOutIso,
-      memo: memo.trim() || editableRecord?.memo || null,
     };
 
     const { error: correctionError } = editableRecord
@@ -607,7 +607,6 @@ export function TenchoClockApp() {
                     <span>出勤 {formatTime(getLatestClockInRecord(row.records)?.clock_in)}</span>
                     <span>退勤 {formatTime(getLatestClockOutRecord(row.records)?.clock_out)}</span>
                     <span>勤務 {formatDuration(row.todayMinutes)}</span>
-                    <span>メモ {row.record?.memo || "-"}</span>
                   </div>
                 </article>
               ))}
@@ -646,17 +645,6 @@ export function TenchoClockApp() {
                   <option value={option} key={option} />
                 ))}
               </datalist>
-            </div>
-
-            <div className="field">
-              <label htmlFor="memo">一言メモ</label>
-              <textarea
-                id="memo"
-                className="textarea"
-                value={memo}
-                onChange={(event) => setMemo(event.target.value)}
-                placeholder="共有したいこと"
-              />
             </div>
 
             <div className="actions">
