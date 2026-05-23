@@ -202,7 +202,7 @@ export function TenchoClockApp() {
 
     setAdminRows(
       (profiles ?? [])
-        .filter((item) => item.role === "manager")
+        .filter((item) => item.role === "manager" || (item.role === "admin" && Boolean(item.store_name?.trim())))
         .map((item) => {
           const userRecords = recordsByUser.get(item.id) ?? [];
           const record = getEditableRecord(userRecords);
