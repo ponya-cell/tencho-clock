@@ -244,6 +244,11 @@ export function TenchoClockApp() {
 
     const name = signupName.trim();
     const signupStore = signupStoreName.trim();
+    if (!signupStore) {
+      setError("店舗名を入力してください");
+      setSaving(false);
+      return;
+    }
 
     const { data, error: signupError } = await supabase.auth.signUp({
       email,
@@ -358,7 +363,7 @@ export function TenchoClockApp() {
   async function saveStoreName() {
     if (!session?.user.id) return;
     const nextStoreName = storeName.trim();
-    if (!nextStoreName) {
+    if (profile?.role !== "admin" && !nextStoreName) {
       setError("店舗名を入力してください");
       return;
     }
