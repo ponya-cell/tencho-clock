@@ -400,7 +400,7 @@ export function TenchoClockApp() {
 
   const openRecord = getOpenRecord(todayRecords);
   const editableRecord = getEditableRecord(todayRecords);
-  const firstTodayRecord = todayRecords[0] ?? null;
+  const latestClockInRecord = getLatestClockInRecord(todayRecords);
   const latestClockOutRecord = getLatestClockOutRecord(todayRecords);
   const status = getRecordsStatus(todayRecords);
   const todayMinutes = recordsMinutes(todayRecords, now);
@@ -596,7 +596,7 @@ export function TenchoClockApp() {
                     <StatusBadge status={row.status} />
                   </div>
                   <div className="row-details">
-                    <span>出勤 {formatTime(row.records[0]?.clock_in)}</span>
+                    <span>出勤 {formatTime(getLatestClockInRecord(row.records)?.clock_in)}</span>
                     <span>退勤 {formatTime(getLatestClockOutRecord(row.records)?.clock_out)}</span>
                     <span>勤務 {formatDuration(row.todayMinutes)}</span>
                     <span>メモ {row.record?.memo || "-"}</span>
@@ -617,7 +617,7 @@ export function TenchoClockApp() {
             </div>
 
             <div className="grid">
-              <Metric label="今日の出勤" value={formatTime(firstTodayRecord?.clock_in)} />
+              <Metric label="今日の出勤" value={formatTime(latestClockInRecord?.clock_in)} />
               <Metric label="今日の退勤" value={formatTime(latestClockOutRecord?.clock_out)} />
               <Metric label="今日の勤務時間" value={formatDuration(todayMinutes)} />
               <Metric label="今月の勤務時間" value={formatDuration(monthMinutes)} />
@@ -757,6 +757,10 @@ function getEditableRecord(records: AttendanceRecord[]) {
 
 function getLatestClockOutRecord(records: AttendanceRecord[]) {
   return [...records].reverse().find((record) => record.clock_out) ?? null;
+}
+
+function getLatestClockInRecord(records: AttendanceRecord[]) {
+  return getOpenRecord(records) ?? [...records].reverse().find((record) => record.clock_in) ?? null;
 }
 
 function sortAttendanceRecords(records: AttendanceRecord[]) {
