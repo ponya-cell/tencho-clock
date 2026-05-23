@@ -34,6 +34,7 @@ export function TenchoClockApp() {
   const [signupStoreName, setSignupStoreName] = useState("");
   const [storeName, setStoreName] = useState("");
   const [storeNameLoadedForUser, setStoreNameLoadedForUser] = useState<string | null>(null);
+  const [isEditingStoreName, setIsEditingStoreName] = useState(false);
   const [isEditingAttendance, setIsEditingAttendance] = useState(false);
   const [manualClockIn, setManualClockIn] = useState("");
   const [manualClockOut, setManualClockOut] = useState("");
@@ -630,22 +631,46 @@ export function TenchoClockApp() {
               <Metric label="今月の勤務時間" value={formatDuration(monthMinutes)} />
             </div>
 
-            <div className="field">
-              <label htmlFor="store">勤務店舗</label>
-              <input
-                id="store"
-                className="input"
-                list="store-options"
-                value={storeName}
-                onChange={(event) => setStoreName(event.target.value)}
-                placeholder="店舗名"
-              />
-              <datalist id="store-options">
-                {storeOptions.map((option) => (
-                  <option value={option} key={option} />
-                ))}
-              </datalist>
-            </div>
+            {isEditingStoreName ? (
+              <div className="field">
+                <label htmlFor="store">勤務店舗</label>
+                <input
+                  id="store"
+                  className="input"
+                  list="store-options"
+                  value={storeName}
+                  onChange={(event) => setStoreName(event.target.value)}
+                  placeholder="店舗名"
+                />
+                <datalist id="store-options">
+                  {storeOptions.map((option) => (
+                    <option value={option} key={option} />
+                  ))}
+                </datalist>
+                <button
+                  className="button secondary compact-button"
+                  type="button"
+                  onClick={() => setIsEditingStoreName(false)}
+                  disabled={saving}
+                >
+                  決定
+                </button>
+              </div>
+            ) : (
+              <div className="store-summary">
+                <div className="store-summary-label">
+                  <span>勤務店舗：</span>
+                  <button
+                    className="store-change-button"
+                    type="button"
+                    onClick={() => setIsEditingStoreName(true)}
+                  >
+                    変更する
+                  </button>
+                </div>
+                <div className="store-summary-name">{storeName.trim() || "未設定"}</div>
+              </div>
+            )}
 
             <div className="actions">
               <button

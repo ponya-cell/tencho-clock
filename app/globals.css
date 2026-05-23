@@ -148,6 +148,42 @@ button {
   background: var(--danger);
 }
 
+.compact-button {
+  min-height: 44px;
+}
+
+.store-change-button {
+  min-height: 36px;
+  border-radius: 8px;
+  background: #eef4f3;
+  color: var(--primary);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  font-weight: 700;
+  padding: 0 12px;
+}
+
+.store-summary {
+  display: grid;
+  gap: 6px;
+}
+
+.store-summary-label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.store-summary-name {
+  font-size: 20px;
+  font-weight: 800;
+  line-height: 1.4;
+}
+
 .status {
   display: inline-flex;
   width: fit-content;
