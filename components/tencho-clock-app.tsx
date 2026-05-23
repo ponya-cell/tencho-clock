@@ -295,11 +295,18 @@ export function TenchoClockApp() {
       memo: memo.trim() || null,
     };
 
-    const { error: insertError } = await supabase.from("attendance_records").insert(payload);
+    const { data: insertedRecord, error: insertError } = await supabase
+      .from("attendance_records")
+      .insert(payload)
+      .select("*")
+      .single<AttendanceRecord>();
 
     if (insertError) {
       setError(insertError.message);
     } else {
+      setNow(new Date());
+      setTodayRecords((records) => sortAttendanceRecords([...records, insertedRecord]));
+      setMonthRecords((records) => sortAttendanceRecords([...records, insertedRecord]));
       await loadDashboard();
     }
     setSaving(false);
@@ -750,4 +757,12 @@ function getEditableRecord(records: AttendanceRecord[]) {
 
 function getLatestClockOutRecord(records: AttendanceRecord[]) {
   return [...records].reverse().find((record) => record.clock_out) ?? null;
+}
+
+function sortAttendanceRecords(records: AttendanceRecord[]) {
+  return [...records].sort((a, b) => {
+    const aTime = a.clock_in ?? a.created_at;
+    const bTime = b.clock_in ?? b.created_at;
+    return new Date(aTime).getTime() - new Date(bTime).getTime();
+  });
 }
