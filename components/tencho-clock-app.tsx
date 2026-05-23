@@ -372,7 +372,7 @@ export function TenchoClockApp() {
       .eq("id", session.user.id);
 
     if (updateError) {
-      setError(updateError.message);
+      setError(`saveStoreName: ${updateError.message}`);
     } else {
       setStoreName(nextStoreName);
       setProfile((current) => (current ? { ...current, store_name: nextStoreName } : current));
