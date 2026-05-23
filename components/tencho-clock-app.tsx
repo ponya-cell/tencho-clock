@@ -112,8 +112,9 @@ export function TenchoClockApp() {
       }
 
       if (loadedProfile.role === "admin") {
-        setView("admin");
-        await loadAdminRows(loadedProfile, today);
+        if (view === "admin") {
+          await loadAdminRows(loadedProfile, today);
+        }
       } else {
         setView("manager");
       }
@@ -131,7 +132,7 @@ export function TenchoClockApp() {
       .eq("id", userId)
       .maybeSingle<Profile>();
 
-    if (profileError) throw profileError;
+    if (profileError) throw supabaseContextError("fetchProfile", profileError.message);
     if (data) return data;
 
     const fallbackProfile: Profile = {
@@ -156,7 +157,7 @@ export function TenchoClockApp() {
       .order("created_at", { ascending: true })
       .returns<AttendanceRecord[]>();
 
-    if (recordError) throw recordError;
+    if (recordError) throw supabaseContextError("fetchTodayRecords", recordError.message);
     return data ?? [];
   }
 
@@ -170,7 +171,7 @@ export function TenchoClockApp() {
       .order("work_date", { ascending: true })
       .returns<AttendanceRecord[]>();
 
-    if (monthError) throw monthError;
+    if (monthError) throw supabaseContextError("fetchMonthRecords", monthError.message);
     return data ?? [];
   }
 
@@ -187,8 +188,8 @@ export function TenchoClockApp() {
           .returns<AttendanceRecord[]>(),
       ]);
 
-    if (profilesError) throw profilesError;
-    if (recordsError) throw recordsError;
+    if (profilesError) throw supabaseContextError("loadAdminRows profiles select", profilesError.message);
+    if (recordsError) throw supabaseContextError("loadAdminRows attendance select", recordsError.message);
 
     const recordsByUser = new Map<string, AttendanceRecord[]>();
     for (const record of records ?? []) {
@@ -266,6 +267,25 @@ export function TenchoClockApp() {
     setSaving(true);
     await supabase.auth.signOut();
     setSaving(false);
+  }
+
+  async function openAdminView() {
+    setView("admin");
+    setError("");
+    try {
+      await loadAdminRows();
+    } catch (adminError) {
+      setError(adminError instanceof Error ? adminError.message : "管理者一覧の読み込みに失敗しました");
+    }
+  }
+
+  async function refreshAdminRows() {
+    setError("");
+    try {
+      await loadAdminRows();
+    } catch (adminError) {
+      setError(adminError instanceof Error ? adminError.message : "管理者一覧の読み込みに失敗しました");
+    }
   }
 
   async function handleClockIn() {
@@ -512,10 +532,7 @@ export function TenchoClockApp() {
             <button
               className={`tab ${view === "admin" ? "active" : ""}`}
               type="button"
-              onClick={() => {
-                setView("admin");
-                void loadAdminRows();
-              }}
+              onClick={() => void openAdminView()}
             >
               管理者
             </button>
@@ -541,7 +558,7 @@ export function TenchoClockApp() {
               <button
                 className="button secondary"
                 type="button"
-                onClick={() => void loadAdminRows()}
+                onClick={() => void refreshAdminRows()}
                 disabled={saving}
               >
                 更新
@@ -770,6 +787,10 @@ function isManagerStatusProfile(profile: Profile) {
 function ensureProfileIncluded(profiles: Profile[], fallbackProfile: Profile | null) {
   if (!fallbackProfile || profiles.some((item) => item.id === fallbackProfile.id)) return profiles;
   return [...profiles, fallbackProfile];
+}
+
+function supabaseContextError(context: string, message: string) {
+  return new Error(`${context}: ${message}`);
 }
 
 function sortAttendanceRecords(records: AttendanceRecord[]) {
