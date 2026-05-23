@@ -134,22 +134,16 @@ export function TenchoClockApp() {
     if (profileError) throw profileError;
     if (data) return data;
 
-    const fallbackProfile = {
+    const fallbackProfile: Profile = {
       id: userId,
       email: userEmail,
       name: userEmail?.split("@")[0] ?? "店長",
       role: "manager",
       store_name: "",
+      created_at: "",
     };
 
-    const { data: created, error: createError } = await supabase
-      .from("profiles")
-      .insert(fallbackProfile)
-      .select("*")
-      .single<Profile>();
-
-    if (createError) throw createError;
-    return created;
+    return fallbackProfile;
   }
 
   async function fetchTodayRecords(userId: string) {
@@ -258,31 +252,8 @@ export function TenchoClockApp() {
     }
 
     if (data.session && data.user) {
-      const profilePayload = {
-        id: data.user.id,
-        email: data.user.email ?? email,
-        name,
-        role: "manager",
-        store_name: signupStore,
-      };
-
-      const { data: updatedProfile, error: updateProfileError } = await supabase
-        .from("profiles")
-        .update(profilePayload)
-        .eq("id", data.user.id)
-        .select("id")
-        .maybeSingle();
-
-      const { error: profileError } = updateProfileError || !updatedProfile
-        ? await supabase.from("profiles").insert(profilePayload)
-        : { error: null };
-
-      if (profileError) {
-        setError(profileError.message);
-      } else {
-        setSession(data.session);
-        setMessage("アカウントを作成しました");
-      }
+      setSession(data.session);
+      setMessage("アカウントを作成しました");
     } else {
       setAuthMode("login");
       setMessage("アカウントを作成しました。メール確認後にログインしてください。");
@@ -354,37 +325,9 @@ export function TenchoClockApp() {
     setIsEditingAttendance(true);
   }
 
-  async function saveStoreName() {
-    if (!session?.user.id || !profile) {
-      setIsEditingStoreName(false);
-      return;
-    }
-
-    const nextStoreName = storeName.trim();
-    setSaving(true);
+  function closeStoreNameEdit() {
     setError("");
-
-    const { data: updatedProfile, error: updateError } = await supabase
-      .from("profiles")
-      .update({ store_name: nextStoreName })
-      .eq("id", session.user.id)
-      .select("*")
-      .maybeSingle<Profile>();
-
-    if (updateError) {
-      setError(updateError.message);
-    } else if (!updatedProfile) {
-      setError("店舗名を保存できませんでした");
-    } else {
-      setProfile(updatedProfile);
-      setStoreName(updatedProfile.store_name ?? "");
-      setIsEditingStoreName(false);
-      if (updatedProfile.role === "admin") {
-        await loadAdminRows(updatedProfile, todayRecords);
-      }
-    }
-
-    setSaving(false);
+    setIsEditingStoreName(false);
   }
 
   async function handleManualCorrection(event: FormEvent<HTMLFormElement>) {
@@ -686,7 +629,7 @@ export function TenchoClockApp() {
                 <button
                   className="button secondary compact-button"
                   type="button"
-                  onClick={() => void saveStoreName()}
+                  onClick={closeStoreNameEdit}
                   disabled={saving}
                 >
                   決定
