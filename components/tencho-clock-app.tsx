@@ -355,9 +355,31 @@ export function TenchoClockApp() {
     setIsEditingAttendance(true);
   }
 
-  function closeStoreNameEdit() {
+  async function saveStoreName() {
+    if (!session?.user.id) return;
+    const nextStoreName = storeName.trim();
+    if (!nextStoreName) {
+      setError("店舗名を入力してください");
+      return;
+    }
+
+    setSaving(true);
     setError("");
-    setIsEditingStoreName(false);
+
+    const { error: updateError } = await supabase
+      .from("profiles")
+      .update({ store_name: nextStoreName })
+      .eq("id", session.user.id);
+
+    if (updateError) {
+      setError(updateError.message);
+    } else {
+      setStoreName(nextStoreName);
+      setProfile((current) => (current ? { ...current, store_name: nextStoreName } : current));
+      setIsEditingStoreName(false);
+    }
+
+    setSaving(false);
   }
 
   async function handleManualCorrection(event: FormEvent<HTMLFormElement>) {
@@ -656,7 +678,7 @@ export function TenchoClockApp() {
                 <button
                   className="button secondary compact-button"
                   type="button"
-                  onClick={closeStoreNameEdit}
+                  onClick={() => void saveStoreName()}
                   disabled={saving}
                 >
                   決定
