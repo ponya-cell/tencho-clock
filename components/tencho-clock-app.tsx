@@ -113,7 +113,7 @@ export function TenchoClockApp() {
 
       if (loadedProfile.role === "admin") {
         setView("admin");
-        await loadAdminRows();
+        await loadAdminRows(loadedProfile, today);
       } else {
         setView("manager");
       }
@@ -180,7 +180,7 @@ export function TenchoClockApp() {
     return data ?? [];
   }
 
-  async function loadAdminRows() {
+  async function loadAdminRows(fallbackProfile = profile, fallbackRecords = todayRecords) {
     const [{ data: profiles, error: profilesError }, { data: records, error: recordsError }] =
       await Promise.all([
         supabase.from("profiles").select("*").order("name", { ascending: true }).returns<Profile[]>(),
@@ -200,10 +200,13 @@ export function TenchoClockApp() {
     for (const record of records ?? []) {
       recordsByUser.set(record.user_id, [...(recordsByUser.get(record.user_id) ?? []), record]);
     }
+    if (fallbackProfile && fallbackRecords.length > 0 && !recordsByUser.has(fallbackProfile.id)) {
+      recordsByUser.set(fallbackProfile.id, fallbackRecords);
+    }
 
     setAdminRows(
-      (profiles ?? [])
-        .filter((item) => item.role === "manager" || (item.role === "admin" && Boolean(item.store_name?.trim())))
+      ensureProfileIncluded(profiles ?? [], fallbackProfile)
+        .filter(isManagerStatusProfile)
         .map((item) => {
           const userRecords = recordsByUser.get(item.id) ?? [];
           const record = getEditableRecord(userRecords);
@@ -349,6 +352,39 @@ export function TenchoClockApp() {
     setError("");
     setMessage("");
     setIsEditingAttendance(true);
+  }
+
+  async function saveStoreName() {
+    if (!session?.user.id || !profile) {
+      setIsEditingStoreName(false);
+      return;
+    }
+
+    const nextStoreName = storeName.trim();
+    setSaving(true);
+    setError("");
+
+    const { data: updatedProfile, error: updateError } = await supabase
+      .from("profiles")
+      .update({ store_name: nextStoreName })
+      .eq("id", session.user.id)
+      .select("*")
+      .maybeSingle<Profile>();
+
+    if (updateError) {
+      setError(updateError.message);
+    } else if (!updatedProfile) {
+      setError("店舗名を保存できませんでした");
+    } else {
+      setProfile(updatedProfile);
+      setStoreName(updatedProfile.store_name ?? "");
+      setIsEditingStoreName(false);
+      if (updatedProfile.role === "admin") {
+        await loadAdminRows(updatedProfile, todayRecords);
+      }
+    }
+
+    setSaving(false);
   }
 
   async function handleManualCorrection(event: FormEvent<HTMLFormElement>) {
@@ -650,7 +686,7 @@ export function TenchoClockApp() {
                 <button
                   className="button secondary compact-button"
                   type="button"
-                  onClick={() => setIsEditingStoreName(false)}
+                  onClick={() => void saveStoreName()}
                   disabled={saving}
                 >
                   決定
@@ -782,6 +818,15 @@ function getLatestClockOutRecord(records: AttendanceRecord[]) {
 
 function getLatestClockInRecord(records: AttendanceRecord[]) {
   return getOpenRecord(records) ?? [...records].reverse().find((record) => record.clock_in) ?? null;
+}
+
+function isManagerStatusProfile(profile: Profile) {
+  return profile.role === "manager" || (profile.role === "admin" && Boolean(profile.store_name?.trim()));
+}
+
+function ensureProfileIncluded(profiles: Profile[], fallbackProfile: Profile | null) {
+  if (!fallbackProfile || profiles.some((item) => item.id === fallbackProfile.id)) return profiles;
+  return [...profiles, fallbackProfile];
 }
 
 function sortAttendanceRecords(records: AttendanceRecord[]) {
