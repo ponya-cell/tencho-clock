@@ -251,16 +251,24 @@ export function TenchoClockApp() {
     }
 
     if (data.session && data.user) {
-      const { error: profileError } = await supabase.from("profiles").upsert(
-        {
-          id: data.user.id,
-          email: data.user.email ?? email,
-          name,
-          role: "manager",
-          store_name: signupStore,
-        },
-        { onConflict: "id" },
-      );
+      const profilePayload = {
+        id: data.user.id,
+        email: data.user.email ?? email,
+        name,
+        role: "manager",
+        store_name: signupStore,
+      };
+
+      const { data: updatedProfile, error: updateProfileError } = await supabase
+        .from("profiles")
+        .update(profilePayload)
+        .eq("id", data.user.id)
+        .select("id")
+        .maybeSingle();
+
+      const { error: profileError } = updateProfileError || !updatedProfile
+        ? await supabase.from("profiles").insert(profilePayload)
+        : { error: null };
 
       if (profileError) {
         setError(profileError.message);
