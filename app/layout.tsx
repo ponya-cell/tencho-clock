@@ -3,8 +3,8 @@ import type { ReactNode } from "react";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Tencho Clock",
-  description: "店長向けの軽量勤怠打刻アプリ",
+  title: "WorkZeit",
+  description: "店長向けの軽量勤怠管理アプリ",
   manifest: "/manifest.webmanifest",
   icons: {
     icon: [

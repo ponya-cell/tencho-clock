@@ -141,7 +141,7 @@ export function TenchoClockApp() {
       return {
         ...data,
         name: data.name?.trim() || metadataText(userMetadata.name) || userEmail?.split("@")[0] || "店長",
-        store_name: data.store_name?.trim() || metadataText(userMetadata.store_name) || "",
+        store_name: data.store_name?.trim() || "",
       };
     }
 
@@ -305,12 +305,18 @@ export function TenchoClockApp() {
 
   async function handleClockIn() {
     if (!session?.user.id) return;
+    const currentStoreName = storeName.trim();
+    if (profile?.role !== "admin" && !currentStoreName) {
+      setError("店舗名を入力してください");
+      return;
+    }
+
     setSaving(true);
     setError("");
     const payload = {
       user_id: session.user.id,
       work_date: todayKey(),
-      store_name: storeName.trim() || profile?.store_name || null,
+      store_name: currentStoreName || null,
       clock_in: new Date().toISOString(),
       clock_out: null,
     };
@@ -455,7 +461,7 @@ export function TenchoClockApp() {
   );
   const visibleAdminRows = adminRows.filter((row) => filter === "all" || row.status === filter);
   const storeOptions = Array.from(
-    new Set([profile?.store_name, editableRecord?.store_name, storeName].filter(Boolean) as string[]),
+    new Set([profile?.store_name, storeName].filter(Boolean) as string[]),
   );
 
   if (loading) {
@@ -474,7 +480,7 @@ export function TenchoClockApp() {
         <div className="container">
           <form className="panel login-panel stack" onSubmit={isSignup ? handleSignup : handleLogin}>
             <div>
-              <h1 className="brand">Tencho Clock</h1>
+              <h1 className="brand">WorkZeit</h1>
               <p className="subtle">{isSignup ? "店長アカウントを作成" : "メールアドレスでログイン"}</p>
             </div>
             {error ? <div className="error">{error}</div> : null}
@@ -556,7 +562,7 @@ export function TenchoClockApp() {
       <div className="container stack">
         <header className="topbar">
           <div>
-            <h1 className="brand">Tencho Clock</h1>
+            <h1 className="brand">WorkZeit</h1>
             <div className="subtle">{profile?.name ?? profile?.email ?? "店長"}</div>
           </div>
           <button className="button secondary" type="button" onClick={handleLogout} disabled={saving}>

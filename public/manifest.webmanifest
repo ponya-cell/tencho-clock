@@ -1,7 +1,7 @@
 {
-  "name": "Tencho Clock",
-  "short_name": "Tencho Clock",
-  "description": "店長向けの軽量勤怠打刻アプリ",
+  "name": "WorkZeit",
+  "short_name": "WorkZeit",
+  "description": "店長向けの軽量勤怠管理アプリ",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#f7f7f4",
