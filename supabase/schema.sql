@@ -91,9 +91,12 @@ begin
   values (
     new.id,
     new.email,
-    coalesce(new.raw_user_meta_data ->> 'name', split_part(new.email, '@', 1)),
-    'manager',
-    coalesce(new.raw_user_meta_data ->> 'store_name', '')
+    coalesce(nullif(new.raw_user_meta_data ->> 'name', ''), new.email, split_part(new.email, '@', 1)),
+    case
+      when new.raw_user_meta_data ->> 'role' = 'admin' then 'admin'
+      else 'manager'
+    end,
+    nullif(new.raw_user_meta_data ->> 'store_name', '')
   )
   on conflict (id) do nothing;
 
@@ -106,6 +109,20 @@ create trigger on_auth_user_created_profile
 after insert on auth.users
 for each row
 execute function public.handle_new_user_profile();
+
+insert into public.profiles (id, email, name, role, store_name)
+select
+  users.id,
+  users.email,
+  coalesce(nullif(users.raw_user_meta_data ->> 'name', ''), users.email, split_part(users.email, '@', 1)),
+  case
+    when users.raw_user_meta_data ->> 'role' = 'admin' then 'admin'
+    else 'manager'
+  end,
+  nullif(users.raw_user_meta_data ->> 'store_name', '')
+from auth.users as users
+left join public.profiles as profiles on profiles.id = users.id
+where profiles.id is null;
 
 drop policy if exists "profiles_self_or_admin_select" on public.profiles;
 drop policy if exists "profiles_self_insert" on public.profiles;

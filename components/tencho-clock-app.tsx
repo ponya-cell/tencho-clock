@@ -145,16 +145,7 @@ export function TenchoClockApp() {
       };
     }
 
-    const fallbackProfile: Profile = {
-      id: userId,
-      email: userEmail,
-      name: metadataText(userMetadata.name) || userEmail?.split("@")[0] || "店長",
-      role: "manager",
-      store_name: metadataText(userMetadata.store_name) || "",
-      created_at: "",
-    };
-
-    return fallbackProfile;
+    throw new Error("プロフィール作成が未完了です。管理者に確認してください。");
   }
 
   async function fetchTodayRecords(userId: string) {
