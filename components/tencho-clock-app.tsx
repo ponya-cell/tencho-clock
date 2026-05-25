@@ -25,6 +25,7 @@ export function TenchoClockApp() {
   const [todayRecords, setTodayRecords] = useState<AttendanceRecord[]>([]);
   const [monthRecords, setMonthRecords] = useState<AttendanceRecord[]>([]);
   const [adminRows, setAdminRows] = useState<AdminAttendanceRow[]>([]);
+  const [adminMonthRecordsByUser, setAdminMonthRecordsByUser] = useState<Record<string, AttendanceRecord[]>>({});
   const [view, setView] = useState<View>("manager");
   const [authMode, setAuthMode] = useState<AuthMode>("login");
   const [filter, setFilter] = useState<AttendanceStatus | "all">("all");
@@ -67,6 +68,7 @@ export function TenchoClockApp() {
         setTodayRecords([]);
         setMonthRecords([]);
         setAdminRows([]);
+        setAdminMonthRecordsByUser({});
         setNameDraft("");
         setStoreNameLoadedForUser(null);
       }
@@ -204,20 +206,39 @@ export function TenchoClockApp() {
       recordsByUser.set(fallbackProfile.id, fallbackRecords);
     }
 
+    const visibleProfiles = ensureProfileIncluded(profiles ?? [], fallbackProfile).filter(isManagerStatusProfile);
+    const monthlyTotalProfile = visibleProfiles.find(isMonthlyTotalTargetProfile);
+    const monthRecordsByUser: Record<string, AttendanceRecord[]> = {};
+    if (monthlyTotalProfile) {
+      const { data: targetMonthRecords, error: targetMonthError } = await supabase
+        .from("attendance_records")
+        .select("*")
+        .eq("user_id", monthlyTotalProfile.id)
+        .gte("work_date", monthStartKey())
+        .lte("work_date", monthEndKey())
+        .order("work_date", { ascending: true })
+        .order("clock_in", { ascending: true, nullsFirst: false })
+        .returns<AttendanceRecord[]>();
+
+      if (targetMonthError) {
+        throw supabaseContextError("loadAdminRows target month records", targetMonthError.message);
+      }
+      monthRecordsByUser[monthlyTotalProfile.id] = targetMonthRecords ?? [];
+    }
+
+    setAdminMonthRecordsByUser(monthRecordsByUser);
     setAdminRows(
-      ensureProfileIncluded(profiles ?? [], fallbackProfile)
-        .filter(isManagerStatusProfile)
-        .map((item) => {
-          const userRecords = recordsByUser.get(item.id) ?? [];
-          const record = getEditableRecord(userRecords);
-          return {
-            profile: item,
-            record,
-            records: userRecords,
-            status: getRecordsStatus(userRecords),
-            todayMinutes: recordsMinutes(userRecords, now),
-          };
-        }),
+      visibleProfiles.map((item) => {
+        const userRecords = recordsByUser.get(item.id) ?? [];
+        const record = getEditableRecord(userRecords);
+        return {
+          profile: item,
+          record,
+          records: userRecords,
+          status: getRecordsStatus(userRecords),
+          todayMinutes: recordsMinutes(userRecords, now),
+        };
+      }),
     );
   }
 
@@ -672,6 +693,11 @@ export function TenchoClockApp() {
                     <span>出勤 {formatTime(getLatestClockInRecord(row.records)?.clock_in)}</span>
                     <span>退勤 {formatTime(getLatestClockOutRecord(row.records)?.clock_out)}</span>
                     <span>勤務 {formatDuration(row.todayMinutes)}</span>
+                    {isMonthlyTotalTargetProfile(row.profile) ? (
+                      <span>
+                        今月合計 {formatDuration(recordsMinutes(adminMonthRecordsByUser[row.profile.id] ?? [], now))}
+                      </span>
+                    ) : null}
                   </div>
                 </article>
               ))}
@@ -872,6 +898,15 @@ function dateTimeInputToIso(value: string) {
   return new Date(value).toISOString();
 }
 
+function monthEndKey() {
+  const today = new Date();
+  const endOfMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+  const year = endOfMonth.getFullYear();
+  const month = String(endOfMonth.getMonth() + 1).padStart(2, "0");
+  const day = String(endOfMonth.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
 function getOpenRecord(records: AttendanceRecord[]) {
   return records.find((record) => record.clock_in && !record.clock_out) ?? null;
 }
@@ -890,6 +925,14 @@ function getLatestClockInRecord(records: AttendanceRecord[]) {
 
 function isManagerStatusProfile(profile: Profile) {
   return profile.role === "manager" || (profile.role === "admin" && Boolean(profile.store_name?.trim()));
+}
+
+function isMonthlyTotalTargetProfile(profile: Profile) {
+  return normalizeProfileName(profile.name) === "大谷津守宏";
+}
+
+function normalizeProfileName(value: string | null | undefined) {
+  return (value ?? "").replace(/[\s\u3000]+/g, "");
 }
 
 function ensureProfileIncluded(profiles: Profile[], fallbackProfile: Profile | null) {
