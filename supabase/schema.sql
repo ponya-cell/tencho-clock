@@ -60,7 +60,8 @@ alter table public.attendance_records enable row level security;
 
 grant usage on schema public to authenticated;
 grant select, insert on public.profiles to authenticated;
-grant update (store_name) on public.profiles to authenticated;
+revoke update on public.profiles from authenticated;
+grant update (name, store_name) on public.profiles to authenticated;
 grant select, insert, update on public.attendance_records to authenticated;
 
 create or replace function private.is_admin(check_user_id uuid)
@@ -127,6 +128,7 @@ where profiles.id is null;
 drop policy if exists "profiles_self_or_admin_select" on public.profiles;
 drop policy if exists "profiles_self_insert" on public.profiles;
 drop policy if exists "profiles_self_update_store_name" on public.profiles;
+drop policy if exists "profiles_self_update_own_fields" on public.profiles;
 drop policy if exists "attendance_self_or_admin_select" on public.attendance_records;
 drop policy if exists "attendance_self_insert" on public.attendance_records;
 drop policy if exists "attendance_self_update" on public.attendance_records;
@@ -149,7 +151,7 @@ with check (
   and role = 'manager'
 );
 
-create policy "profiles_self_update_store_name"
+create policy "profiles_self_update_own_fields"
 on public.profiles
 for update
 to authenticated

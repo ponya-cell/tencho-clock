@@ -32,8 +32,10 @@ export function TenchoClockApp() {
   const [password, setPassword] = useState("");
   const [signupName, setSignupName] = useState("");
   const [signupStoreName, setSignupStoreName] = useState("");
+  const [nameDraft, setNameDraft] = useState("");
   const [storeName, setStoreName] = useState("");
   const [storeNameLoadedForUser, setStoreNameLoadedForUser] = useState<string | null>(null);
+  const [isEditingName, setIsEditingName] = useState(false);
   const [isEditingStoreName, setIsEditingStoreName] = useState(false);
   const [isEditingAttendance, setIsEditingAttendance] = useState(false);
   const [manualClockIn, setManualClockIn] = useState("");
@@ -65,6 +67,7 @@ export function TenchoClockApp() {
         setTodayRecords([]);
         setMonthRecords([]);
         setAdminRows([]);
+        setNameDraft("");
         setStoreNameLoadedForUser(null);
       }
     });
@@ -97,6 +100,7 @@ export function TenchoClockApp() {
         session.user.user_metadata,
       );
       setProfile(loadedProfile);
+      setNameDraft(loadedProfile.name?.trim() || "");
       if (storeNameLoadedForUser !== session.user.id) {
         setStoreName(loadedProfile.store_name ?? "");
         setStoreNameLoadedForUser(session.user.id);
@@ -384,6 +388,36 @@ export function TenchoClockApp() {
     setSaving(false);
   }
 
+  async function saveProfileName() {
+    if (!session?.user.id) return;
+    const nextName = nameDraft.trim();
+    if (!nextName) {
+      setError("名前を入力してください");
+      return;
+    }
+
+    setSaving(true);
+    setError("");
+
+    const { error: updateError } = await supabase
+      .from("profiles")
+      .update({ name: nextName })
+      .eq("id", session.user.id);
+
+    if (updateError) {
+      setError(`saveProfileName: ${updateError.message}`);
+    } else {
+      setNameDraft(nextName);
+      setProfile((current) => (current ? { ...current, name: nextName } : current));
+      setIsEditingName(false);
+      if (view === "admin" && profile?.role === "admin") {
+        await loadAdminRows({ ...profile, name: nextName }, todayRecords);
+      }
+    }
+
+    setSaving(false);
+  }
+
   async function handleManualCorrection(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!session?.user.id) return;
@@ -660,6 +694,46 @@ export function TenchoClockApp() {
               <Metric label="今日の勤務時間" value={formatDuration(todayMinutes)} />
               <Metric label="今月の勤務時間" value={formatDuration(monthMinutes)} />
             </div>
+
+            {isEditingName ? (
+              <div className="field">
+                <label htmlFor="profile-name">名前</label>
+                <input
+                  id="profile-name"
+                  className="input"
+                  type="text"
+                  autoComplete="name"
+                  value={nameDraft}
+                  onChange={(event) => setNameDraft(event.target.value)}
+                  placeholder="名前"
+                />
+                <button
+                  className="button secondary compact-button"
+                  type="button"
+                  onClick={() => void saveProfileName()}
+                  disabled={saving}
+                >
+                  決定
+                </button>
+              </div>
+            ) : (
+              <div className="store-summary">
+                <div className="store-summary-label">
+                  <span>名前：</span>
+                  <button
+                    className="store-change-button"
+                    type="button"
+                    onClick={() => {
+                      setNameDraft(profile?.name?.trim() || "");
+                      setIsEditingName(true);
+                    }}
+                  >
+                    変更する
+                  </button>
+                </div>
+                <div className="store-summary-name">{profile?.name?.trim() || "未設定"}</div>
+              </div>
+            )}
 
             {isEditingStoreName ? (
               <div className="field">
