@@ -108,13 +108,15 @@ export function TenchoClockApp() {
         setStoreNameLoadedForUser(session.user.id);
       }
 
-      const [today, month] = await Promise.all([
+      const [today, activeRecord, month] = await Promise.all([
         fetchTodayRecords(session.user.id),
+        fetchLatestOpenRecord(session.user.id),
         fetchMonthRecords(session.user.id),
       ]);
+      const activeTodayRecords = mergeAttendanceRecords(today, activeRecord ? [activeRecord] : []);
 
-      const targetRecord = getEditableRecord(today);
-      setTodayRecords(today);
+      const targetRecord = getEditableRecord(activeTodayRecords);
+      setTodayRecords(activeTodayRecords);
       setMonthRecords(month);
       if (isEditingAttendance) {
         setManualClockIn(toDateTimeInputValue(targetRecord?.clock_in));
@@ -123,7 +125,7 @@ export function TenchoClockApp() {
 
       if (loadedProfile.role === "admin") {
         if (view === "admin") {
-          await loadAdminRows(loadedProfile, today);
+          await loadAdminRows(loadedProfile, activeTodayRecords);
         }
       } else {
         setView("manager");
@@ -168,6 +170,21 @@ export function TenchoClockApp() {
     return data ?? [];
   }
 
+  async function fetchLatestOpenRecord(userId: string) {
+    const { data, error: openRecordError } = await supabase
+      .from("attendance_records")
+      .select("*")
+      .eq("user_id", userId)
+      .is("clock_out", null)
+      .order("clock_in", { ascending: false, nullsFirst: false })
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle<AttendanceRecord>();
+
+    if (openRecordError) throw supabaseContextError("fetchLatestOpenRecord", openRecordError.message);
+    return data ?? null;
+  }
+
   async function fetchMonthRecords(userId: string) {
     const { data, error: monthError } = await supabase
       .from("attendance_records")
@@ -183,7 +200,11 @@ export function TenchoClockApp() {
   }
 
   async function loadAdminRows(fallbackProfile = profile, fallbackRecords = todayRecords) {
-    const [{ data: profiles, error: profilesError }, { data: records, error: recordsError }] =
+    const [
+      { data: profiles, error: profilesError },
+      { data: records, error: recordsError },
+      { data: openRecords, error: openRecordsError },
+    ] =
       await Promise.all([
         supabase.from("profiles").select("*").order("name", { ascending: true }).returns<Profile[]>(),
         supabase
@@ -193,14 +214,31 @@ export function TenchoClockApp() {
           .order("clock_in", { ascending: true, nullsFirst: false })
           .order("created_at", { ascending: true })
           .returns<AttendanceRecord[]>(),
+        supabase
+          .from("attendance_records")
+          .select("*")
+          .is("clock_out", null)
+          .order("clock_in", { ascending: false, nullsFirst: false })
+          .order("created_at", { ascending: false })
+          .returns<AttendanceRecord[]>(),
       ]);
 
     if (profilesError) throw supabaseContextError("loadAdminRows profiles select", profilesError.message);
     if (recordsError) throw supabaseContextError("loadAdminRows attendance select", recordsError.message);
+    if (openRecordsError) throw supabaseContextError("loadAdminRows open records select", openRecordsError.message);
 
     const recordsByUser = new Map<string, AttendanceRecord[]>();
     for (const record of records ?? []) {
       recordsByUser.set(record.user_id, [...(recordsByUser.get(record.user_id) ?? []), record]);
+    }
+    const latestOpenRecordsByUser = new Map<string, AttendanceRecord>();
+    for (const record of openRecords ?? []) {
+      if (!latestOpenRecordsByUser.has(record.user_id)) {
+        latestOpenRecordsByUser.set(record.user_id, record);
+      }
+    }
+    for (const record of latestOpenRecordsByUser.values()) {
+      recordsByUser.set(record.user_id, mergeAttendanceRecords(recordsByUser.get(record.user_id) ?? [], [record]));
     }
     if (fallbackProfile && fallbackRecords.length > 0 && !recordsByUser.has(fallbackProfile.id)) {
       recordsByUser.set(fallbackProfile.id, fallbackRecords);
@@ -324,6 +362,10 @@ export function TenchoClockApp() {
     const currentStoreName = storeName.trim();
     if (profile?.role !== "admin" && !currentStoreName) {
       setError("店舗名を入力してください");
+      return;
+    }
+    if (openRecord) {
+      setError("出勤中の打刻があります。退勤してから出勤してください。");
       return;
     }
 
@@ -908,7 +950,7 @@ function monthEndKey() {
 }
 
 function getOpenRecord(records: AttendanceRecord[]) {
-  return records.find((record) => record.clock_in && !record.clock_out) ?? null;
+  return [...records].reverse().find((record) => record.clock_in && !record.clock_out) ?? null;
 }
 
 function getEditableRecord(records: AttendanceRecord[]) {
@@ -954,4 +996,15 @@ function sortAttendanceRecords(records: AttendanceRecord[]) {
     const bTime = b.clock_in ?? b.created_at;
     return new Date(aTime).getTime() - new Date(bTime).getTime();
   });
+}
+
+function mergeAttendanceRecords(records: AttendanceRecord[], additions: AttendanceRecord[]) {
+  const recordsById = new Map<string, AttendanceRecord>();
+  for (const record of records) {
+    recordsById.set(record.id, record);
+  }
+  for (const record of additions) {
+    recordsById.set(record.id, record);
+  }
+  return sortAttendanceRecords([...recordsById.values()]);
 }
