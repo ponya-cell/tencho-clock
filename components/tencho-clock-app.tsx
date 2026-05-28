@@ -23,6 +23,7 @@ export function TenchoClockApp() {
   const [session, setSession] = useState<Session | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [todayRecords, setTodayRecords] = useState<AttendanceRecord[]>([]);
+  const [activeRecord, setActiveRecord] = useState<AttendanceRecord | null>(null);
   const [monthRecords, setMonthRecords] = useState<AttendanceRecord[]>([]);
   const [adminRows, setAdminRows] = useState<AdminAttendanceRow[]>([]);
   const [adminMonthRecordsByUser, setAdminMonthRecordsByUser] = useState<Record<string, AttendanceRecord[]>>({});
@@ -66,6 +67,7 @@ export function TenchoClockApp() {
       if (!nextSession) {
         setProfile(null);
         setTodayRecords([]);
+        setActiveRecord(null);
         setMonthRecords([]);
         setAdminRows([]);
         setAdminMonthRecordsByUser({});
@@ -108,19 +110,15 @@ export function TenchoClockApp() {
         setStoreNameLoadedForUser(session.user.id);
       }
 
-      const [today, openShiftRecord, closedOvernightRecord, month] = await Promise.all([
+      const [today, openShiftRecord, month] = await Promise.all([
         fetchTodayRecords(session.user.id),
         fetchLatestOpenRecord(session.user.id),
-        fetchLatestClosedOvernightRecord(session.user.id),
         fetchMonthRecords(session.user.id),
       ]);
-      const activeTodayRecords = mergeAttendanceRecords(
-        today,
-        [openShiftRecord, closedOvernightRecord].filter(Boolean) as AttendanceRecord[],
-      );
 
-      const targetRecord = getEditableRecord(activeTodayRecords);
-      setTodayRecords(activeTodayRecords);
+      const targetRecord = openShiftRecord ?? getEditableRecord(today);
+      setTodayRecords(today);
+      setActiveRecord(openShiftRecord);
       setMonthRecords(month);
       if (isEditingAttendance) {
         setManualClockIn(toDateTimeInputValue(targetRecord?.clock_in));
@@ -129,7 +127,7 @@ export function TenchoClockApp() {
 
       if (loadedProfile.role === "admin") {
         if (view === "admin") {
-          await loadAdminRows(loadedProfile, activeTodayRecords);
+          await loadAdminRows(loadedProfile, today);
         }
       } else {
         setView("manager");
@@ -189,22 +187,6 @@ export function TenchoClockApp() {
     return data ?? null;
   }
 
-  async function fetchLatestClosedOvernightRecord(userId: string) {
-    const { data, error: closedRecordError } = await supabase
-      .from("attendance_records")
-      .select("*")
-      .eq("user_id", userId)
-      .lt("work_date", todayKey())
-      .gte("clock_out", startOfTodayIso())
-      .order("clock_out", { ascending: false, nullsFirst: false })
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle<AttendanceRecord>();
-
-    if (closedRecordError) throw supabaseContextError("fetchLatestClosedOvernightRecord", closedRecordError.message);
-    return data ?? null;
-  }
-
   async function fetchMonthRecords(userId: string) {
     const { data, error: monthError } = await supabase
       .from("attendance_records")
@@ -224,7 +206,6 @@ export function TenchoClockApp() {
       { data: profiles, error: profilesError },
       { data: records, error: recordsError },
       { data: openRecords, error: openRecordsError },
-      { data: closedOvernightRecords, error: closedOvernightRecordsError },
     ] =
       await Promise.all([
         supabase.from("profiles").select("*").order("name", { ascending: true }).returns<Profile[]>(),
@@ -242,22 +223,11 @@ export function TenchoClockApp() {
           .order("clock_in", { ascending: false, nullsFirst: false })
           .order("created_at", { ascending: false })
           .returns<AttendanceRecord[]>(),
-        supabase
-          .from("attendance_records")
-          .select("*")
-          .lt("work_date", todayKey())
-          .gte("clock_out", startOfTodayIso())
-          .order("clock_out", { ascending: false, nullsFirst: false })
-          .order("created_at", { ascending: false })
-          .returns<AttendanceRecord[]>(),
       ]);
 
     if (profilesError) throw supabaseContextError("loadAdminRows profiles select", profilesError.message);
     if (recordsError) throw supabaseContextError("loadAdminRows attendance select", recordsError.message);
     if (openRecordsError) throw supabaseContextError("loadAdminRows open records select", openRecordsError.message);
-    if (closedOvernightRecordsError) {
-      throw supabaseContextError("loadAdminRows closed overnight records select", closedOvernightRecordsError.message);
-    }
 
     const recordsByUser = new Map<string, AttendanceRecord[]>();
     for (const record of records ?? []) {
@@ -270,15 +240,6 @@ export function TenchoClockApp() {
       }
     }
     for (const record of latestOpenRecordsByUser.values()) {
-      recordsByUser.set(record.user_id, mergeAttendanceRecords(recordsByUser.get(record.user_id) ?? [], [record]));
-    }
-    const latestClosedOvernightRecordsByUser = new Map<string, AttendanceRecord>();
-    for (const record of closedOvernightRecords ?? []) {
-      if (!latestClosedOvernightRecordsByUser.has(record.user_id)) {
-        latestClosedOvernightRecordsByUser.set(record.user_id, record);
-      }
-    }
-    for (const record of latestClosedOvernightRecordsByUser.values()) {
       recordsByUser.set(record.user_id, mergeAttendanceRecords(recordsByUser.get(record.user_id) ?? [], [record]));
     }
     if (fallbackProfile && fallbackRecords.length > 0 && !recordsByUser.has(fallbackProfile.id)) {
@@ -431,6 +392,7 @@ export function TenchoClockApp() {
     } else {
       setNow(new Date());
       setTodayRecords((records) => sortAttendanceRecords([...records, insertedRecord]));
+      setActiveRecord(insertedRecord);
       setMonthRecords((records) => sortAttendanceRecords([...records, insertedRecord]));
       await loadDashboard();
     }
@@ -456,8 +418,11 @@ export function TenchoClockApp() {
       setError(updateError.message);
     } else {
       setNow(new Date());
-      const nextTodayRecords = mergeAttendanceRecords(todayRecords, [updatedRecord]);
+      const nextTodayRecords = isTodayRecord(updatedRecord)
+        ? mergeAttendanceRecords(todayRecords, [updatedRecord])
+        : todayRecords;
       setTodayRecords(nextTodayRecords);
+      setActiveRecord(null);
       if (isCurrentMonthRecord(updatedRecord)) {
         setMonthRecords((records) => mergeAttendanceRecords(records, [updatedRecord]));
       }
@@ -589,11 +554,11 @@ export function TenchoClockApp() {
     setSaving(false);
   }
 
-  const openRecord = getOpenRecord(todayRecords);
-  const editableRecord = getEditableRecord(todayRecords);
-  const latestClockInRecord = getLatestClockInRecord(todayRecords);
+  const openRecord = activeRecord ?? getOpenRecord(todayRecords);
+  const editableRecord = openRecord ?? getEditableRecord(todayRecords);
+  const latestClockInRecord = openRecord ?? getLatestClockInRecord(todayRecords);
   const latestClockOutRecord = getLatestClockOutRecord(todayRecords);
-  const status = getRecordsStatus(todayRecords);
+  const status = openRecord ? "working" : getRecordsStatus(todayRecords);
   const todayMinutes = recordsMinutes(todayRecords, now);
   const monthMinutes = useMemo(
     () => monthRecords.reduce((sum, record) => sum + recordMinutes(record, now), 0),
@@ -992,11 +957,6 @@ function dateTimeInputToIso(value: string) {
   return new Date(value).toISOString();
 }
 
-function startOfTodayIso() {
-  const now = new Date();
-  return new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
-}
-
 function monthEndKey() {
   const today = new Date();
   const endOfMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0);
@@ -1036,6 +996,10 @@ function normalizeProfileName(value: string | null | undefined) {
 
 function isCurrentMonthRecord(record: AttendanceRecord) {
   return record.work_date >= monthStartKey() && record.work_date <= todayKey();
+}
+
+function isTodayRecord(record: AttendanceRecord) {
+  return record.work_date === todayKey();
 }
 
 function ensureProfileIncluded(profiles: Profile[], fallbackProfile: Profile | null) {
