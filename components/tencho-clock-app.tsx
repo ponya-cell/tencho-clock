@@ -108,12 +108,16 @@ export function TenchoClockApp() {
         setStoreNameLoadedForUser(session.user.id);
       }
 
-      const [today, activeRecord, month] = await Promise.all([
+      const [today, openShiftRecord, closedOvernightRecord, month] = await Promise.all([
         fetchTodayRecords(session.user.id),
         fetchLatestOpenRecord(session.user.id),
+        fetchLatestClosedOvernightRecord(session.user.id),
         fetchMonthRecords(session.user.id),
       ]);
-      const activeTodayRecords = mergeAttendanceRecords(today, activeRecord ? [activeRecord] : []);
+      const activeTodayRecords = mergeAttendanceRecords(
+        today,
+        [openShiftRecord, closedOvernightRecord].filter(Boolean) as AttendanceRecord[],
+      );
 
       const targetRecord = getEditableRecord(activeTodayRecords);
       setTodayRecords(activeTodayRecords);
@@ -185,6 +189,22 @@ export function TenchoClockApp() {
     return data ?? null;
   }
 
+  async function fetchLatestClosedOvernightRecord(userId: string) {
+    const { data, error: closedRecordError } = await supabase
+      .from("attendance_records")
+      .select("*")
+      .eq("user_id", userId)
+      .lt("work_date", todayKey())
+      .gte("clock_out", startOfTodayIso())
+      .order("clock_out", { ascending: false, nullsFirst: false })
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle<AttendanceRecord>();
+
+    if (closedRecordError) throw supabaseContextError("fetchLatestClosedOvernightRecord", closedRecordError.message);
+    return data ?? null;
+  }
+
   async function fetchMonthRecords(userId: string) {
     const { data, error: monthError } = await supabase
       .from("attendance_records")
@@ -204,6 +224,7 @@ export function TenchoClockApp() {
       { data: profiles, error: profilesError },
       { data: records, error: recordsError },
       { data: openRecords, error: openRecordsError },
+      { data: closedOvernightRecords, error: closedOvernightRecordsError },
     ] =
       await Promise.all([
         supabase.from("profiles").select("*").order("name", { ascending: true }).returns<Profile[]>(),
@@ -221,11 +242,22 @@ export function TenchoClockApp() {
           .order("clock_in", { ascending: false, nullsFirst: false })
           .order("created_at", { ascending: false })
           .returns<AttendanceRecord[]>(),
+        supabase
+          .from("attendance_records")
+          .select("*")
+          .lt("work_date", todayKey())
+          .gte("clock_out", startOfTodayIso())
+          .order("clock_out", { ascending: false, nullsFirst: false })
+          .order("created_at", { ascending: false })
+          .returns<AttendanceRecord[]>(),
       ]);
 
     if (profilesError) throw supabaseContextError("loadAdminRows profiles select", profilesError.message);
     if (recordsError) throw supabaseContextError("loadAdminRows attendance select", recordsError.message);
     if (openRecordsError) throw supabaseContextError("loadAdminRows open records select", openRecordsError.message);
+    if (closedOvernightRecordsError) {
+      throw supabaseContextError("loadAdminRows closed overnight records select", closedOvernightRecordsError.message);
+    }
 
     const recordsByUser = new Map<string, AttendanceRecord[]>();
     for (const record of records ?? []) {
@@ -238,6 +270,15 @@ export function TenchoClockApp() {
       }
     }
     for (const record of latestOpenRecordsByUser.values()) {
+      recordsByUser.set(record.user_id, mergeAttendanceRecords(recordsByUser.get(record.user_id) ?? [], [record]));
+    }
+    const latestClosedOvernightRecordsByUser = new Map<string, AttendanceRecord>();
+    for (const record of closedOvernightRecords ?? []) {
+      if (!latestClosedOvernightRecordsByUser.has(record.user_id)) {
+        latestClosedOvernightRecordsByUser.set(record.user_id, record);
+      }
+    }
+    for (const record of latestClosedOvernightRecordsByUser.values()) {
       recordsByUser.set(record.user_id, mergeAttendanceRecords(recordsByUser.get(record.user_id) ?? [], [record]));
     }
     if (fallbackProfile && fallbackRecords.length > 0 && !recordsByUser.has(fallbackProfile.id)) {
@@ -400,18 +441,29 @@ export function TenchoClockApp() {
     if (!openRecord) return;
     setSaving(true);
     setError("");
-    const { error: updateError } = await supabase
+    const clockOutAt = new Date().toISOString();
+    const { data: updatedRecord, error: updateError } = await supabase
       .from("attendance_records")
       .update({
         store_name: storeName.trim() || openRecord.store_name,
-        clock_out: new Date().toISOString(),
+        clock_out: clockOutAt,
       })
-      .eq("id", openRecord.id);
+      .eq("id", openRecord.id)
+      .select("*")
+      .single<AttendanceRecord>();
 
     if (updateError) {
       setError(updateError.message);
     } else {
-      await loadDashboard();
+      setNow(new Date());
+      const nextTodayRecords = mergeAttendanceRecords(todayRecords, [updatedRecord]);
+      setTodayRecords(nextTodayRecords);
+      if (isCurrentMonthRecord(updatedRecord)) {
+        setMonthRecords((records) => mergeAttendanceRecords(records, [updatedRecord]));
+      }
+      if (view === "admin" && profile?.role === "admin") {
+        await loadAdminRows(profile, nextTodayRecords);
+      }
     }
     setSaving(false);
   }
@@ -940,6 +992,11 @@ function dateTimeInputToIso(value: string) {
   return new Date(value).toISOString();
 }
 
+function startOfTodayIso() {
+  const now = new Date();
+  return new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
+}
+
 function monthEndKey() {
   const today = new Date();
   const endOfMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0);
@@ -975,6 +1032,10 @@ function isMonthlyTotalTargetProfile(profile: Profile) {
 
 function normalizeProfileName(value: string | null | undefined) {
   return (value ?? "").replace(/[\s\u3000]+/g, "");
+}
+
+function isCurrentMonthRecord(record: AttendanceRecord) {
+  return record.work_date >= monthStartKey() && record.work_date <= todayKey();
 }
 
 function ensureProfileIncluded(profiles: Profile[], fallbackProfile: Profile | null) {
